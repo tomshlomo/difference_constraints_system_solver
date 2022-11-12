@@ -68,33 +68,36 @@ impl<T: VarId> Default for Solution<T> {
 }
 
 pub struct DCS<T: VarId> {
-    succesors: HashMap<T, Vec<(T, i64)>>,
+    feasible_constraints: HashMap<T, HashMap<T, i64>>,
+    infeasible_constraints: HashMap<T, HashMap<T, i64>>,
 }
 
 impl<T: VarId> DCS<T> {
     pub fn new() -> Self {
-        let succesors = HashMap::new();
-        DCS { succesors }
+        DCS {
+            feasible_constraints: HashMap::new(),
+            infeasible_constraints: HashMap::new(),
+        }
     }
     pub fn is_variable(&self, x: &T) -> bool {
-        self.succesors.contains_key(x)
+        self.feasible_constraints.contains_key(x)
     }
     pub fn add_unconstrained_variable(&mut self, x: &T) {
         if !self.is_variable(x) {
-            self.succesors.insert(x.clone(), vec![]);
+            self.feasible_constraints.insert(x.clone(), HashMap::new());
         }
     }
     fn var_constraints(&self, u: &T) -> Vec<Constraint<T>> {
         // all constraints of the form v - u <= c, for a given u.
-        self.succesors
+        self.feasible_constraints
             .get(u)
-            .unwrap_or(&vec![])
+            .unwrap_or(&HashMap::new())
             .iter()
             .map(|(v, c)| Constraint::new(v.clone(), u.clone(), *c))
             .collect()
     }
     fn constraints(&self) -> Vec<Constraint<T>> {
-        self.succesors
+        self.feasible_constraints
             .keys()
             .into_iter()
             .flat_map(|var| self.var_constraints(var))
@@ -108,15 +111,32 @@ impl<T: VarId> DCS<T> {
         }
         true
     }
-    fn add_succesor(&mut self, from_var: &T, to_variable: &T, c: i64) {
-        self.succesors
-            .entry(from_var.clone())
+    fn add_to_feasible(&mut self, constraint: &Constraint<T>) {
+        self.feasible_constraints
+            .entry(constraint.u.clone())
             .or_default()
-            .push((to_variable.clone(), c));
+            .insert(constraint.v.clone(), constraint.c);
     }
-
-    pub fn add_to_feasible(
+    fn add_to_infeasible(&mut self, constraint: &Constraint<T>) {
+        self.feasible_constraints
+            .entry(constraint.u.clone())
+            .or_default()
+            .insert(constraint.v.clone(), constraint.c);
+    }
+    pub fn add_constraint(
         &mut self,
+        constraint: &Constraint<T>,
+        sol: &Solution<T>,
+    ) -> Option<Solution<T>> {
+        let new_sol = self.check_and_solve_new_constraint(constraint, sol);
+        match new_sol {
+            Some(_) => self.add_to_feasible(constraint),
+            None => self.add_to_infeasible(constraint),
+        }
+        new_sol
+    }
+    pub fn check_and_solve_new_constraint(
+        &self,
         constraint: &Constraint<T>,
         sol: &Solution<T>,
     ) -> Option<Solution<T>> {
@@ -141,7 +161,7 @@ impl<T: VarId> DCS<T> {
                 return None;
             }
             new_sol.update(&x.clone(), new_val); // can I get rid of this clone?
-            let Some(succesors) = self.succesors.get(x) else {
+            let Some(succesors) = self.feasible_constraints.get(x) else {
                     continue;
             };
             for (y, x2y_unscaled) in succesors.iter() {
@@ -152,88 +172,6 @@ impl<T: VarId> DCS<T> {
             }
         }
         new_sol.merge(sol);
-        self.add_succesor(&constraint.u, &constraint.v, constraint.c);
-        Some(new_sol)
-    }
-
-    pub fn add_to_feasible_verbose(
-        &mut self,
-        constraint: &Constraint<T>,
-        sol: &Solution<T>,
-    ) -> Option<Solution<T>> {
-        println!("adding constraint {}", constraint);
-        println!("current solution is: {:#?}", sol.0);
-        self.add_unconstrained_variable(&constraint.v); // are these really necessary?
-        self.add_unconstrained_variable(&constraint.u);
-        // self.add_succesor(&constraint.u, &constraint.v, constraint.c);
-        // if sol.check_constraint(constraint) {
-        // disabled this for now since assigning all missing vars to zero is not necearily correct.
-        // v - u <= c
-        // should probably be something like add_var_id_missing(v, default=sol.get(u) + c)
-        //     let mut new_sol = sol.clone();
-        //     new_sol.add_var_if_missing(constraint.u.clone());
-        //     new_sol.add_var_if_missing(constraint.v.clone());
-        //     return Some(new_sol);
-        // }
-        let mut new_sol = Solution::new();
-        // let mut new_sol = sol.clone();
-        // new_sol.add_var_if_missing(constraint.u.clone());
-        // new_sol.add_var_if_missing(constraint.v.clone());
-        let mut q = PriorityQueue::new();
-        q.push(constraint.v.clone(), 0);
-        let mut visited = HashSet::new();
-        let d_u = sol.get_or(&constraint.u, 0);
-        while let Some((x, v2x_scaled)) = q.pop() {
-            if visited.contains(&x) {
-                continue;
-            }
-            visited.insert(x.clone());
-            assert!(v2x_scaled >= 0);
-            println!("starting new dijkstra iteration.\nnew node is {:?}, with current solution value = {:?}", x, sol.get_or(&x, 0));
-            println!(
-                "scaled shortest dist from {:?} to {:?} is {:?}",
-                constraint.v, x, v2x_scaled
-            );
-            let v2x_descaled = self.descale_dist(v2x_scaled, &constraint.v, &x, sol);
-            println!(
-                "descaled, shortest dist from {:?} to {:?} is {:?}.",
-                constraint.v, x, v2x_descaled
-            );
-            if x == constraint.u {
-                println!("current node is the target node {:?}.", constraint.u);
-                println!("the system is feasible iff the shortest (descaled) distance from {:?} to {:?} is greater or equal to {:?}.", constraint.v, constraint.u, -constraint.c);
-            }
-            let d_x = sol.get_or(&x, 0);
-            let is_affected = d_x > d_u + constraint.c + v2x_descaled;
-            println!("is_affected={}", is_affected);
-            if is_affected {
-                if x == constraint.u {
-                    // self.succesors.get_mut(&constraint.u).unwrap().pop(); // remove the new constraint
-                    print!("System is infeasible");
-                    return None;
-                }
-                println!(
-                    "updating {:?} from {} to {}",
-                    x,
-                    d_x,
-                    d_u + constraint.c + v2x_descaled
-                );
-                new_sol.update(&x, d_u + constraint.c + v2x_descaled);
-                println!("iterating over succesors of {:?}:", x);
-                for (y, x2y_scaled) in self.scaled_succesors(&x, sol) {
-                    assert!(x2y_scaled >= 0);
-                    println!("scaled dist of {:?} to {:?} is {}", x, y, x2y_scaled);
-                    println!("value of {:?} in queue is {:?}", y, q.get_priority(&y));
-                    q.push_decrease(y.clone(), v2x_scaled + x2y_scaled); // todo: this clone is just to get the print working
-                    println!("new value of {:?} in queue is {:?}", y, q.get_priority(&y));
-                }
-            }
-        }
-        new_sol.merge(sol);
-        new_sol.add_var_if_missing(constraint.u.clone());
-        new_sol.add_var_if_missing(constraint.v.clone());
-        println!("new solution is: {:#?}", new_sol.0);
-        self.add_succesor(&constraint.u, &constraint.v, constraint.c);
         Some(new_sol)
     }
     pub fn get_implied_ub(&self, x: &T, y: &T, sol: &Solution<T>) -> Option<i64> {
@@ -254,8 +192,8 @@ impl<T: VarId> DCS<T> {
         result.map(|(_, cost)| self.descale_dist(cost, from_node, to_node, sol))
     }
     fn scaled_succesors(&self, node: &T, sol: &Solution<T>) -> Vec<(T, i64)> {
-        let def = vec![];
-        let s = self.succesors.get(node).unwrap_or(&def);
+        let def = HashMap::new();
+        let s = self.feasible_constraints.get(node).unwrap_or(&def);
         let out = s
             .iter()
             .map(|(y, w)| (y.clone(), sol.get_or(node, 0) + w - sol.get_or(y, 0)))
@@ -285,7 +223,7 @@ mod tests {
         let mut sol = Solution::new();
         for (v, u, c) in constraints {
             let constraint = Constraint::new(v, u, c);
-            if let Some(new_sol) = sys.add_to_feasible(&constraint, &sol) {
+            if let Some(new_sol) = sys.add_constraint(&constraint, &sol) {
                 assert!(sys.check_solution(&new_sol));
                 sol = new_sol;
             } else {
@@ -301,7 +239,7 @@ mod tests {
         let y = "y".to_owned();
         let mut sys = DCS::new();
         let sol = Solution::new();
-        let new_sol = sys.add_to_feasible(&Constraint::new(x, y, 0), &sol);
+        let new_sol = sys.add_constraint(&Constraint::new(x, y, 0), &sol);
         assert!(sys.check_solution(&new_sol.unwrap()))
     }
 
