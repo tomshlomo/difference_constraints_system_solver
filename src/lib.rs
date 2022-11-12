@@ -111,17 +111,18 @@ impl<T: VarId> DCS<T> {
     fn add_succesor(&mut self, from_var: &T, to_variable: &T, c: i64) {
         self.succesors
             .entry(from_var.clone())
-            .or_insert(vec![])
+            .or_default()
             .push((to_variable.clone(), c));
     }
+
     pub fn add_to_feasible(
         &mut self,
         constraint: &Constraint<T>,
         sol: &Solution<T>,
     ) -> Option<Solution<T>> {
         let mut new_sol = Solution::new();
-        let mut q = PriorityQueue::new();
-        q.push(constraint.v.clone(), 0);
+        let mut q: PriorityQueue<&T, i64> = PriorityQueue::new();
+        q.push(&constraint.v, 0);
         let mut visited = HashSet::new();
         let d_u = sol.get_or(&constraint.u, 0);
         let d_v = sol.get_or(&constraint.v, 0);
@@ -129,27 +130,32 @@ impl<T: VarId> DCS<T> {
             if !visited.insert(x.clone()) {
                 continue;
             }
-            let d_x = sol.get_or(&x, 0);
+            let d_x = sol.get_or(x, 0);
             let v2x_descaled = v2x_scaled - d_v + d_x;
             let new_val = d_u + constraint.c + v2x_descaled;
             let is_affected = d_x > new_val;
-            if is_affected {
-                if x == constraint.u {
-                    return None;
-                }
-                new_sol.update(&x, new_val);
-                for (y, x2y_unscaled) in self.succesors.get(&x).unwrap_or(&vec![]).iter() {
-                    let d_y = sol.get_or(y, 0);
-                    let x2y_scaled = x2y_unscaled + d_x - d_y;
-                    let v2y_scaled = v2x_scaled + x2y_scaled;
-                    q.push_decrease(y.clone(), v2y_scaled);
-                }
+            if !is_affected {
+                continue;
+            }
+            if x == &constraint.u {
+                return None;
+            }
+            new_sol.update(&x.clone(), new_val); // can I get rid of this clone?
+            let Some(succesors) = self.succesors.get(x) else {
+                    continue;
+            };
+            for (y, x2y_unscaled) in succesors.iter() {
+                let d_y = sol.get_or(y, 0);
+                let x2y_scaled = x2y_unscaled + d_x - d_y;
+                let v2y_scaled = v2x_scaled + x2y_scaled;
+                q.push_decrease(y, v2y_scaled);
             }
         }
         new_sol.merge(sol);
         self.add_succesor(&constraint.u, &constraint.v, constraint.c);
         Some(new_sol)
     }
+
     pub fn add_to_feasible_verbose(
         &mut self,
         constraint: &Constraint<T>,
