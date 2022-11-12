@@ -214,10 +214,10 @@ impl<T: VarId> DCS<T> {
         //     new_sol.add_var_if_missing(constraint.v.clone());
         //     return Some(new_sol);
         // }
-        let mut new_sol = sol.clone();
-        // let mut new_sol = Solution::new();
-        new_sol.add_var_if_missing(constraint.u.clone());
-        new_sol.add_var_if_missing(constraint.v.clone());
+        let mut new_sol = Solution::new();
+        // let mut new_sol = sol.clone();
+        // new_sol.add_var_if_missing(constraint.u.clone());
+        // new_sol.add_var_if_missing(constraint.v.clone());
         let mut q = PriorityQueue::new();
         q.push(constraint.v.clone(), 0);
         let mut visited = HashSet::new();
@@ -268,9 +268,9 @@ impl<T: VarId> DCS<T> {
                 }
             }
         }
-        // new_sol.merge(sol);
-        // new_sol.add_var_if_missing(constraint.u.clone());
-        // new_sol.add_var_if_missing(constraint.v.clone());
+        new_sol.merge(sol);
+        new_sol.add_var_if_missing(constraint.u.clone());
+        new_sol.add_var_if_missing(constraint.v.clone());
         println!("new solution is: {:#?}", new_sol.0);
         self.add_succesor(&constraint.u, &constraint.v, constraint.c);
         Some(new_sol)
