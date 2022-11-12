@@ -1,7 +1,8 @@
+use pathfinding::prelude::dijkstra;
 use priority_queue::PriorityQueue;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Display};
-use std::hash::Hash;
+use std::hash::Hash; // 0.6.5
 
 pub trait VarId: Eq + Hash + Debug + Clone + Display {}
 impl<T> VarId for T where T: Eq + Hash + Debug + Clone + Display {}
@@ -15,6 +16,7 @@ pub struct Constraint<T: VarId> {
 }
 impl<T: VarId> Constraint<T> {
     pub fn new(v: T, u: T, c: i64) -> Self {
+        assert!(v != u);
         Constraint { v, u, c }
     }
 }
@@ -54,6 +56,11 @@ impl<T: VarId> Solution<T> {
             return v_val - u_val <= constraint.c;
         }
         true
+    }
+    pub fn merge(&mut self, other: &Solution<T>) {
+        for (key, val) in other.0.iter() {
+            self.0.entry(key.clone()).or_insert(*val);
+        }
     }
 }
 
@@ -111,51 +118,202 @@ impl<T: VarId> DCS<T> {
         true
     }
     fn add_succesor(&mut self, from_var: &T, to_variable: &T, c: i64) {
+        // todo: input should be a constraint
+        let s = self.succesors.get(from_var).expect("should be here");
+        if s.contains(&(to_variable.clone(), c)) {
+            panic!("multi edge found!");
+        }
         self.succesors
             .get_mut(from_var)
             .expect("variable should be added")
             .push((to_variable.clone(), c));
     }
-    pub fn add_to_feasible(
+    // pub fn add_to_feasible(
+    //     &mut self,
+    //     constraint: &Constraint<T>,
+    //     sol: &Solution<T>,
+    // ) -> Option<Solution<T>> {
+    //     println!("adding constraint {}", constraint);
+    //     println!("current solution is: {:#?}", sol.0);
+    //     self.add_unconstrained_variable(&constraint.v); // are these really necessary?
+    //     self.add_unconstrained_variable(&constraint.u);
+    //     self.add_succesor(&constraint.u, &constraint.v, constraint.c);
+    //     // if sol.check_constraint(constraint) {
+    //     // disabled this for now since assigning all missing vars to zero is not necearily correct.
+    //     // v - u <= c
+    //     // should probably be something like add_var_id_missing(v, default=sol.get(u) + c)
+    //     //     let mut new_sol = sol.clone();
+    //     //     new_sol.add_var_if_missing(constraint.u.clone());
+    //     //     new_sol.add_var_if_missing(constraint.v.clone());
+    //     //     return Some(new_sol);
+    //     // }
+    //     let mut new_sol = sol.clone();
+    //     // let mut new_sol = Solution::new();
+    //     new_sol.add_var_if_missing(constraint.u.clone());
+    //     new_sol.add_var_if_missing(constraint.v.clone());
+    //     let mut q = PriorityQueue::new();
+    //     q.push(&constraint.v, 0);
+    //     while let Some((x, scaled_v2x)) = q.pop() {
+    //         println!("starting new dijkstra iteration.\nnew node is {:?}", x);
+    //         println!(
+    //             "scaled dist from {:?} to {:?} is {:?}",
+    //             constraint.v, x, scaled_v2x
+    //         );
+    //         let descaled_v2x = self.descale_dist(scaled_v2x, &constraint.v, x, sol);
+    //         println!(
+    //             "descaled, shortest dist from {:?} to {:?} is {:?}.",
+    //             constraint.v, x, descaled_v2x
+    //         );
+    //         if x == &constraint.u {
+    //             println!("current node is the target node {:?}.", constraint.u);
+    //             println!("the system is feasible iff the shortest (descaled) distance from {:?} to {:?} is greater or equal to {:?}.", constraint.v, constraint.u, -constraint.c);
+    //         }
+    //         let d_u = sol.get_or(&constraint.u, 0);
+    //         let new_val = d_u + constraint.c + scaled_v2x;
+    //         let d_x = sol.get_or(x, 0);
+    //         let is_affected = d_x > d_u + constraint.c + descaled_v2x;
+    //         if new_val < d_x {
+    //             if x == &constraint.u {
+    //                 self.succesors.get_mut(&constraint.u).unwrap().pop(); // remove the new constraint
+    //                 print!("System is infeasible");
+    //                 return None;
+    //             }
+    //             new_sol.update(x, new_val);
+    //             for (y, x2y) in self.succesors.get(x).unwrap() {
+    //                 let scaled_path_len = scaled_v2x + d_x + x2y - sol.get_or(y, 0);
+    //                 if let Some(y_p) = q.get_priority(y) {
+    //                     if scaled_path_len < *y_p {
+    //                         q.push_decrease(y, scaled_path_len);
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //     }
+    //     // new_sol.merge(sol);
+    //     // new_sol.add_var_if_missing(constraint.u.clone());
+    //     // new_sol.add_var_if_missing(constraint.v.clone());
+    //     println!("new solution is: {:#?}", new_sol.0);
+    //     Some(new_sol)
+    // }
+    pub fn add_to_feasible2(
         &mut self,
         constraint: &Constraint<T>,
         sol: &Solution<T>,
     ) -> Option<Solution<T>> {
         println!("adding constraint {}", constraint);
         println!("current solution is: {:#?}", sol.0);
-        self.add_unconstrained_variable(&constraint.v);
+        self.add_unconstrained_variable(&constraint.v); // are these really necessary?
         self.add_unconstrained_variable(&constraint.u);
-        self.add_succesor(&constraint.u, &constraint.v, constraint.c);
+        // self.add_succesor(&constraint.u, &constraint.v, constraint.c);
+        // if sol.check_constraint(constraint) {
+        // disabled this for now since assigning all missing vars to zero is not necearily correct.
+        // v - u <= c
+        // should probably be something like add_var_id_missing(v, default=sol.get(u) + c)
+        //     let mut new_sol = sol.clone();
+        //     new_sol.add_var_if_missing(constraint.u.clone());
+        //     new_sol.add_var_if_missing(constraint.v.clone());
+        //     return Some(new_sol);
+        // }
         let mut new_sol = sol.clone();
+        // let mut new_sol = Solution::new();
         new_sol.add_var_if_missing(constraint.u.clone());
         new_sol.add_var_if_missing(constraint.v.clone());
-        if new_sol.check_constraint(constraint) {
-            return Some(new_sol)
-        }
-
         let mut q = PriorityQueue::new();
-        q.push(&constraint.v, 0);
-        loop {
-            if let Some((x, dist_x)) = q.pop() {
-                let new_val = sol.get(&constraint.u).unwrap_or(&0) + constraint.c + dist_x;
-                let d_x = *sol.get(x).unwrap_or(&0);
-                if new_val < d_x {
-                    if x == &constraint.u {
-                        self.succesors.get_mut(&constraint.u).unwrap().pop(); // remove the new constraint
-                        print!("System is infeasible");
-                        return None;
-                    }
-                    new_sol.update(x, new_val);
-                    for (y, x2y) in self.succesors.get(x).unwrap() {
-                        let scaled_path_len = dist_x + d_x + x2y - sol.get_or(y, 0);
-                        q.push_decrease(y, scaled_path_len);
-                    }
+        q.push(constraint.v.clone(), 0);
+        let mut visited = HashSet::new();
+        let d_u = sol.get_or(&constraint.u, 0);
+        while let Some((x, v2x_scaled)) = q.pop() {
+            if visited.contains(&x) {
+                continue;
+            }
+            visited.insert(x.clone());
+            assert!(v2x_scaled >= 0); // todo: remove the assert
+            println!("starting new dijkstra iteration.\nnew node is {:?}, with current solution value = {:?}", x, sol.get_or(&x, 0));
+            println!(
+                "scaled shortest dist from {:?} to {:?} is {:?}",
+                constraint.v, x, v2x_scaled
+            );
+            let v2x_descaled = self.descale_dist(v2x_scaled, &constraint.v, &x, sol);
+            println!(
+                "descaled, shortest dist from {:?} to {:?} is {:?}.",
+                constraint.v, x, v2x_descaled
+            );
+            if x == constraint.u {
+                println!("current node is the target node {:?}.", constraint.u);
+                println!("the system is feasible iff the shortest (descaled) distance from {:?} to {:?} is greater or equal to {:?}.", constraint.v, constraint.u, -constraint.c);
+            }
+            let d_x = sol.get_or(&x, 0);
+            let is_affected = d_x > d_u + constraint.c + v2x_descaled;
+            println!("is_affected={}", is_affected);
+            if is_affected {
+                if x == constraint.u {
+                    // self.succesors.get_mut(&constraint.u).unwrap().pop(); // remove the new constraint
+                    print!("System is infeasible");
+                    return None;
                 }
-            } else {
-                println!("new solution is: {:#?}", new_sol.0);
-                return Some(new_sol);
+                println!(
+                    "updating {:?} from {} to {}",
+                    x,
+                    d_x,
+                    d_u + constraint.c + v2x_descaled
+                );
+                new_sol.update(&x, d_u + constraint.c + v2x_descaled);
+                println!("iterating over succesors of {:?}:", x);
+                for (y, x2y_scaled) in self.scaled_succesors(&x, sol) {
+                    assert!(x2y_scaled >= 0); // todo: remove the assert
+                    println!("scaled dist of {:?} to {:?} is {}", x, y, x2y_scaled);
+                    println!("value of {:?} in queue is {:?}", y, q.get_priority(&y));
+                    q.push_decrease(y.clone(), v2x_scaled + x2y_scaled); // todo: this clone is just to get the print working
+                    println!("new value of {:?} in queue is {:?}", y, q.get_priority(&y));
+                }
             }
         }
+        // new_sol.merge(sol);
+        // new_sol.add_var_if_missing(constraint.u.clone());
+        // new_sol.add_var_if_missing(constraint.v.clone());
+        println!("new solution is: {:#?}", new_sol.0);
+        self.add_succesor(&constraint.u, &constraint.v, constraint.c);
+        Some(new_sol)
+    }
+    pub fn get_implied_ub(&self, x: &T, y: &T, sol: &Solution<T>) -> Option<i64> {
+        // gives the constraint x - y <= a (with smallest possible a) that is implied by the system
+        self.dist(y, x, sol)
+    }
+    pub fn get_implied_lb(&self, x: &T, y: &T, sol: &Solution<T>) -> Option<i64> {
+        // gives the constraint x - y >= a (with larget possible a) that is implied by the system.
+        // equivalent to y - x <= -a
+        self.get_implied_ub(x, y, sol).map(|ub| -ub)
+    }
+    fn dist(&self, from_node: &T, to_node: &T, sol: &Solution<T>) -> Option<i64> {
+        let result = dijkstra(
+            from_node,
+            |node| self.scaled_succesors(node, sol),
+            |node| node == to_node,
+        );
+        match result {
+            Some((_, cost)) => {
+                println!("cost before augmentation: {cost}");
+                Some(self.descale_dist(cost, from_node, to_node, sol))
+            }
+            None => {
+                println!("no path found between {:?} and {:?}", from_node, to_node);
+                None
+            }
+        }
+    }
+    fn scaled_succesors(&self, node: &T, sol: &Solution<T>) -> Vec<(T, i64)> {
+        println!("getting scaled succesors for {:?}", node);
+        let def = vec![];
+        let s = self.succesors.get(node).unwrap_or(&def);
+        let out = s
+            .iter()
+            .map(|(y, w)| (y.clone(), sol.get_or(node, 0) + w - sol.get_or(y, 0)))
+            .collect();
+        println!("\tsuccesors of {:?} are {:?}", node, out);
+        out
+    }
+    fn descale_dist(&self, scaled_dist: i64, from_node: &T, to_node: &T, sol: &Solution<T>) -> i64 {
+        -sol.get_or(from_node, 0) + scaled_dist + sol.get_or(to_node, 0)
     }
 }
 
@@ -167,22 +325,28 @@ impl<T: VarId> Default for DCS<T> {
 
 #[cfg(test)]
 mod tests {
+    use rand::{distributions::Uniform, seq};
+    use rand_chacha::ChaCha8Rng;
+
     use super::*;
     fn check_multiple_constraints<T: VarId, I: Iterator<Item = (T, T, i64)>>(
         constraints: I,
-    ) -> Solution<T> {
+    ) -> (DCS<T>, Solution<T>) {
         let mut sys = DCS::new();
         let mut sol = Solution::new();
+        let mut num_constraints = 0;
         for (v, u, c) in constraints {
+            num_constraints += 1;
+            println!("adding constraint number {}", num_constraints);
             let constraint = Constraint::new(v, u, c);
-            if let Some(new_sol) = sys.add_to_feasible(&constraint, &sol) {
+            if let Some(new_sol) = sys.add_to_feasible2(&constraint, &sol) {
                 assert!(sys.check_solution(&new_sol));
                 sol = new_sol;
             } else {
                 panic!()
             }
         }
-        sol
+        (sys, sol)
     }
 
     #[test]
@@ -191,7 +355,7 @@ mod tests {
         let y = "y".to_owned();
         let mut sys = DCS::new();
         let sol = Solution::new();
-        let new_sol = sys.add_to_feasible(&Constraint::new(x, y, 0), &sol);
+        let new_sol = sys.add_to_feasible2(&Constraint::new(x, y, 0), &sol);
         assert!(sys.check_solution(&new_sol.unwrap()))
     }
 
@@ -216,5 +380,86 @@ mod tests {
         let z = "z";
         check_multiple_constraints([(y, x, 1), (z, y, 2), (x, z, -3), (z, x, 4)].into_iter());
         println!("hello")
+    }
+
+    #[test]
+    fn test_get_implied_ub() {
+        let (sys, sol) = check_multiple_constraints(
+            [("y", "x", 1), ("z", "y", 2), ("x", "z", -3), ("z", "x", 4)].into_iter(),
+        );
+        assert_eq!(sys.get_implied_ub(&"z", &"x", &sol).unwrap(), 3);
+    }
+
+    fn generate_feasible_system(
+        num_vars: usize,
+        num_constraints: usize,
+        seed: u64,
+    ) -> Vec<(usize, usize, i64)> {
+        use rand::prelude::*;
+        use rand::seq::SliceRandom;
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        let x: Vec<i64> = (0..num_vars).map(|_| rng.gen_range(0..100)).collect();
+        let mut all_constraints = Vec::new();
+        for v in 0..num_vars {
+            for u in 0..num_vars {
+                if u != v {
+                    all_constraints.push((v, u));
+                }
+            }
+        }
+        let mut out: Vec<(usize, usize, i64)> = all_constraints
+            .iter()
+            .choose_multiple(&mut rng, num_constraints)
+            .into_iter()
+            .map(|(v, u)| (*v, *u, x[*v] - x[*u]))
+            .collect();
+        out.shuffle(&mut rng);
+        out
+        // samples.map(f)
+        // let all_constraints =
+        // (0..num_vars).map(|v| (1..num_vars).map(|offset| (v, (v + offset) % num_vars)));
+        // let sample = seq::index::sample(&mut rng, num_vars * (num_vars - 1), num_constraints);
+        // sample
+        //     .into_iter()
+        //     .map(|y| {
+        //         let v = y % num_vars;
+        //         let offset = (y / (num_vars - 1)) + 1;
+        //         let u = (v + offset) % num_vars;
+        //         (v, u, x[v] - x[u])
+        //     })
+        // .collect()
+    }
+
+    #[test]
+    fn test_random_system() {
+        for num_vars in 2..10 {
+            for seed in 0..100 {
+                let num_constraints = num_vars * (num_vars - 1);
+                println!(
+                    "num_vars: {}, num_constraints: {}",
+                    num_vars, num_constraints
+                );
+                check_multiple_constraints(
+                    generate_feasible_system(num_vars, num_constraints, seed).into_iter(),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_push_decrease() {
+        let mut q = PriorityQueue::new();
+        q.push("x", 1);
+        q.push("y", 10);
+        q.push_decrease("x", 2);
+        assert_eq!(q.get_priority("x"), Some(&1));
+        assert_eq!(q.get_priority("y"), Some(&10));
+
+        let mut q = PriorityQueue::new();
+        q.push("x", 1);
+        q.push("y", 10);
+        q.push_decrease("x", -5);
+        assert_eq!(q.get_priority("x"), Some(&(-5)));
+        assert_eq!(q.get_priority("y"), Some(&10));
     }
 }
