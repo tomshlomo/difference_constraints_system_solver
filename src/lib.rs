@@ -426,7 +426,6 @@ mod tests {
             Constraint { v: 0, u: 2, c: -60 },
             Constraint { v: 1, u: 0, c: -40 },
         ];
-        let (sys, sol) = DCS::from_scratch(constraints.into_iter());
-        assert!(!sys.is_feasible());
+        expect_infeasible(constraints.into_iter());
     }
 }
