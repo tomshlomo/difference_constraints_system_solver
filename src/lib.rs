@@ -175,6 +175,7 @@ impl<T: VarId> DCS<T> {
             let Some(succesors) = self.feasible_constraints.get(x) else {
                     continue;
             };
+            // equivalent to `for (y, x2y_scaled) in self.scaled_succesors(y, sol)`, but with less lookups.
             for (y, x2y_unscaled) in succesors.iter() {
                 let d_y = sol.get_or(y, 0);
                 let x2y_scaled = x2y_unscaled + d_x - d_y;
@@ -205,9 +206,10 @@ impl<T: VarId> DCS<T> {
     fn scaled_succesors(&self, node: &T, sol: &Solution<T>) -> Vec<(T, i64)> {
         let def = HashMap::new();
         let s = self.feasible_constraints.get(node).unwrap_or(&def);
+        let d_node = sol.get_or(node, 0);
         let out = s
             .iter()
-            .map(|(y, w)| (y.clone(), sol.get_or(node, 0) + w - sol.get_or(y, 0)))
+            .map(|(y, w)| (y.clone(), d_node + w - sol.get_or(y, 0)))
             .collect();
         out
     }
@@ -397,15 +399,7 @@ mod tests {
             }
         }
     }
-    // fn add_constraints_to_make_infeasible(
-    //     feasible_constraints: Vec<Constraint<usize>>,
-    //     constraints_to_add: usize,
-    //     seed: u64,
-    // ) -> Vec<Constraint<usize>> {
-    //     let (sys, sol) = DCS::from_scratch(feasible_constraints.into_iter());
-    //     assert!(sys.is_feasible());
 
-    // }
     #[test]
     fn test_random_feasible_system() {
         for num_vars in 2..10 {
