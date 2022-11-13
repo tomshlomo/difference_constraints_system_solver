@@ -153,16 +153,15 @@ impl<T: VarId> DCS<T> {
         sol: &Solution<T>,
     ) -> Option<Solution<T>> {
         let mut new_sol = Solution::new();
-        let mut q: PriorityQueue<&T, Reverse<i64>> = PriorityQueue::new();
-        q.push(&constraint.v, Reverse(0));
+        let mut q: PriorityQueue<&T, (Reverse<i64>, i64)> = PriorityQueue::new();
         let mut visited = HashSet::new();
         let d_u = sol.get_or(&constraint.u, 0);
         let d_v = sol.get_or(&constraint.v, 0);
-        while let Some((x, v2x_scaled)) = q.pop() {
+        q.push(&constraint.v, (Reverse(0), d_v));
+        while let Some((x, (v2x_scaled, d_x))) = q.pop() {
             if !visited.insert(x.clone()) {
                 continue;
             }
-            let d_x = sol.get_or(x, 0); // todo: isert sol to queue to save this lookup
             let v2x_descaled = v2x_scaled.0 - d_v + d_x;
             let new_val = d_u + constraint.c + v2x_descaled;
             let is_affected = d_x > new_val;
@@ -172,7 +171,7 @@ impl<T: VarId> DCS<T> {
             if x == &constraint.u {
                 return None;
             }
-            new_sol.update(&x.clone(), new_val); // todo: can I get rid of this clone?
+            new_sol.update(x, new_val);
             let Some(succesors) = self.feasible_constraints.get(x) else {
                     continue;
             };
@@ -180,7 +179,7 @@ impl<T: VarId> DCS<T> {
                 let d_y = sol.get_or(y, 0);
                 let x2y_scaled = x2y_unscaled + d_x - d_y;
                 let v2y_scaled = v2x_scaled.0 + x2y_scaled;
-                q.push_increase(y, Reverse(v2y_scaled));
+                q.push_increase(y, (Reverse(v2y_scaled), d_y));
             }
         }
         new_sol.merge(sol);
