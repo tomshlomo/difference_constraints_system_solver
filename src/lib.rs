@@ -8,6 +8,9 @@ use std::hash::Hash;
 pub trait VarId: Eq + Hash + Debug + Clone + Display {}
 impl<T> VarId for T where T: Eq + Hash + Debug + Clone + Display {}
 
+pub trait ConstraintId: Eq + Hash + Debug + Clone + Display {}
+impl<T> ConstraintId for T where T: Eq + Hash + Debug + Clone + Display {}
+
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
 pub struct Constraint<T: VarId> {
     // v - u <= c
@@ -71,16 +74,18 @@ impl<T: VarId> Default for Solution<T> {
     }
 }
 
-pub struct DCS<T: VarId> {
+pub struct DCS<T: VarId, C: ConstraintId> {
     feasible_constraints: HashMap<T, HashMap<T, i64>>,
     infeasible_constraints: HashMap<T, HashMap<T, i64>>,
+    constraints: HashMap<C, Constraint<T>>,
 }
 
-impl<T: VarId> DCS<T> {
+impl<T: VarId, C: ConstraintId> DCS<T, C> {
     pub fn new() -> Self {
         DCS {
             feasible_constraints: HashMap::new(),
             infeasible_constraints: HashMap::new(),
+            constraints: HashMap::new(),
         }
     }
     pub fn is_feasible(&self) -> bool {
@@ -275,7 +280,7 @@ impl<T: VarId> DCS<T> {
     }
 }
 
-impl<T: VarId> Default for DCS<T> {
+impl<T: VarId, C: ConstraintId> Default for DCS<T, C> {
     fn default() -> Self {
         Self::new()
     }
@@ -310,9 +315,9 @@ mod tests {
             assert!(sys.check_solution(&sol));
         }
     }
-    fn expect_infeasible<T: VarId, It: Iterator<Item = Constraint<T>>>(
+    fn expect_infeasible<T: VarId, C: ConstraintId, It: Iterator<Item = Constraint<T>>>(
         constraints: It,
-    ) -> (DCS<T>, Solution<T>) {
+    ) -> (DCS<T, C>, Solution<T>) {
         let vec = Vec::from_iter(constraints);
         let (sys, sol) = DCS::from_scratch(vec.clone().into_iter());
         println!("{:#?}", vec);
