@@ -4,54 +4,8 @@ use std::cmp::Reverse;
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 
-use crate::common::{Constraint, VarId};
+use crate::common::{Constraint, EdgeDoesNotExist, MultiEdge, VarId};
 use crate::solution::Solution;
-
-pub struct EdgeDoesNotExist;
-
-#[derive(Default)]
-struct MultiEdge {
-    queue: PriorityQueue<i64, Reverse<i64>>,
-    counts: HashMap<i64, usize>, // todo: maybe use counter crate
-}
-
-impl MultiEdge {
-    fn push(&mut self, c: i64) -> bool {
-        let Some(old_priority) = self.queue.push(c, Reverse(c)) else {
-            self.counts.insert(c, 1);
-            return true;
-        };
-        let count = self.counts.entry(c).or_insert(0);
-        *count += 1;
-        (old_priority.0 > c) && (count == &1)
-    }
-    fn peek(&self) -> Option<&i64> {
-        self.queue.peek().map(|(k, _)| k)
-    }
-    fn remove(&mut self, c: i64) -> Result<bool, EdgeDoesNotExist> {
-        let Entry::Occupied(mut occupied_entry) = self.counts.entry(c) else {
-            return  Err(EdgeDoesNotExist);
-        };
-        let count = occupied_entry.get_mut();
-        if count == &0 {
-            return Err(EdgeDoesNotExist);
-        };
-        if *count > 1 {
-            *count -= 1;
-            return Ok(false);
-        }
-        // count == 1, we need to delete
-        occupied_entry.remove_entry();
-        self.queue.remove(&c);
-        if let Some(new_min) = self.peek() {
-            return Ok(new_min > &c);
-        };
-        Ok(true)
-    }
-    fn is_empty(&self) -> bool {
-        self.queue.is_empty()
-    }
-}
 
 // #[derive(Default)]
 struct FromEdges<T: VarId>(HashMap<T, MultiEdge>);

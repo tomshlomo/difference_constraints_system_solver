@@ -7,7 +7,8 @@ use common::{Constraint, VarId};
 mod solution;
 use solution::Solution;
 mod feasible_system;
-
+mod prioritized_multi_constraints;
+use prioritized_multi_constraints::PrioritizedMulticConstraints;
 pub enum Status {
     Feasible,
     Infeasible,
@@ -16,18 +17,18 @@ pub enum Status {
     // undetermined_constraint: &'a Constraint<T>,
 }
 
-pub struct DCS<T: VarId> {
+pub struct DCS<T: VarId, P: Ord> {
     feasible_subsystem: FeasibleSystem<T>,
-    infeasible_constraints: HashSet<Constraint<T>>,
-    undetermined_constraints: Vec<Constraint<T>>,
+    infeasible_constraints: PrioritizedMulticConstraints<T, P>,
+    undetermined_constraints: PrioritizedMulticConstraints<T, P>,
 }
 
-impl<T: VarId> DCS<T> {
+impl<T: VarId, P: Ord> DCS<T, P> {
     pub fn new() -> Self {
         DCS {
             feasible_subsystem: FeasibleSystem::new(),
-            infeasible_constraints: HashSet::new(),
-            undetermined_constraints: Vec::new(),
+            infeasible_constraints: PrioritizedMulticConstraints::new(),
+            undetermined_constraints: PrioritizedMulticConstraints::new(),
         }
     }
     pub fn is_fully_determined(&self) -> bool {
@@ -94,10 +95,11 @@ impl<T: VarId> DCS<T> {
     pub fn add_constraint(
         &mut self,
         constraint: Constraint<T>,
+        priority: P,
         // sol: &Solution<T>,
         // ) -> Option<Solution<T>> {
     ) {
-        self.undetermined_constraints.push(constraint);
+        self.undetermined_constraints.push(constraint, priority);
         // let new_sol = self.check_and_solve_new_constraint(&constraint, sol);
         // match new_sol {
         //     Some(_) => self.add_to_feasible(constraint),
