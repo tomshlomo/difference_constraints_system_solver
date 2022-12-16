@@ -1,0 +1,7 @@
+struct InfeasibilityProof {
+    
+}
+struct InfeasibilityProofs{
+    
+}
+
