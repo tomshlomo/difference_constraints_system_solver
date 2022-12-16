@@ -1,9 +1,9 @@
 use feasible_system::FeasibleSystem;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 mod common;
-use common::{Constraint, ConstraintTag, VarId};
+use common::{Constraint, VarId};
 mod solution;
 use solution::Solution;
 mod feasible_system;
@@ -12,17 +12,17 @@ pub enum Status {
     Feasible,
     Infeasible,
     Undetermined,
-    // undetermined_constraints: &'a Vec<Constraint<T, C>>,
-    // undetermined_constraint: &'a Constraint<T, C>,
+    // undetermined_constraints: &'a Vec<Constraint<T>>,
+    // undetermined_constraint: &'a Constraint<T>,
 }
 
-pub struct DCS<T: VarId, C: ConstraintTag> {
-    feasible_subsystem: FeasibleSystem<T, C>,
-    infeasible_constraints: HashSet<Constraint<T, C>>,
-    undetermined_constraints: Vec<Constraint<T, C>>,
+pub struct DCS<T: VarId> {
+    feasible_subsystem: FeasibleSystem<T>,
+    infeasible_constraints: HashSet<Constraint<T>>,
+    undetermined_constraints: Vec<Constraint<T>>,
 }
 
-impl<T: VarId, C: ConstraintTag> DCS<T, C> {
+impl<T: VarId> DCS<T> {
     pub fn new() -> Self {
         DCS {
             feasible_subsystem: FeasibleSystem::new(),
@@ -48,7 +48,7 @@ impl<T: VarId, C: ConstraintTag> DCS<T, C> {
 
     // pub fn from_scratch<It>(constraints: It) -> (Self, Solution<T>)
     // where
-    //     It: Iterator<Item = Constraint<T, C>>,
+    //     It: Iterator<Item = Constraint<T>>,
     // {
     //     let mut sys = Self::new();
     //     let mut sol = Solution::new();
@@ -59,10 +59,10 @@ impl<T: VarId, C: ConstraintTag> DCS<T, C> {
     //     }
     //     (sys, sol)
     // }
-    // pub fn feasible_constraints(&self) -> impl Iterator<Item = Constraint<T, C>> + '_ {
+    // pub fn feasible_constraints(&self) -> impl Iterator<Item = Constraint<T>> + '_ {
     //     self.feasible_subsystem.constraints()
     // }
-    // pub fn all_constraints(&self) -> impl Iterator<Item = Constraint<T, C>> + '_ {
+    // pub fn all_constraints(&self) -> impl Iterator<Item = Constraint<T>> + '_ {
     //     self.feasible_constraints()
     //         .chain(self.infeasible_constraints.clone().into_iter())
     //         .chain(self.undetermined_constraints.cl)
@@ -85,15 +85,15 @@ impl<T: VarId, C: ConstraintTag> DCS<T, C> {
             }
         }
     }
-    // fn add_to_feasible(&mut self, constraint: Constraint<T, C>) {
+    // fn add_to_feasible(&mut self, constraint: Constraint<T>) {
     //     self.feasible_constraints.add(constraint);
     // }
-    // fn add_to_infeasible(&mut self, constraint: Constraint<T, C>) {
+    // fn add_to_infeasible(&mut self, constraint: Constraint<T>) {
     // self.infeasible_constraints.add(constraint);
     // }
     pub fn add_constraint(
         &mut self,
-        constraint: Constraint<T, C>,
+        constraint: Constraint<T>,
         // sol: &Solution<T>,
         // ) -> Option<Solution<T>> {
     ) {
@@ -120,7 +120,7 @@ impl<T: VarId, C: ConstraintTag> DCS<T, C> {
             }
         }
     }
-    pub fn remove_constraint(&mut self, constraint: Constraint<T, C>) {
+    pub fn remove_constraint(&mut self, constraint: Constraint<T>) {
         panic!();
         if self.infeasible_constraints.remove(&constraint) {
             return;
@@ -128,14 +128,14 @@ impl<T: VarId, C: ConstraintTag> DCS<T, C> {
         // if self.undetermined_constraints.contains(&)
     }
 }
-impl<T: VarId, C: ConstraintTag> Default for DCS<T, C> {
+impl<T: VarId> Default for DCS<T> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: VarId, C: ConstraintTag> FromIterator<Constraint<T, C>> for DCS<T, C> {
-    fn from_iter<I: IntoIterator<Item = Constraint<T, C>>>(iter: I) -> Self {
+impl<T: VarId> FromIterator<Constraint<T>> for DCS<T> {
+    fn from_iter<I: IntoIterator<Item = Constraint<T>>>(iter: I) -> Self {
         let mut system = DCS::new();
         for constraint in iter {
             system.add_constraint(constraint);
@@ -150,20 +150,20 @@ mod tests {
 
     use super::*;
 
-    type MyConstraint = Constraint<usize, ()>;
+    type MyConstraint = Constraint<usize>;
     type MyConstraints = Vec<MyConstraint>;
     type MySol = Solution<usize>;
 
     fn as_constraints<T: VarId, I: IntoIterator<Item = (T, T, i64)>>(
         tuples: I,
-    ) -> Vec<Constraint<T, ()>> {
+    ) -> Vec<Constraint<T>> {
         tuples
             .into_iter()
-            .map(|(v, u, c)| Constraint { v, u, c, tag: () })
+            .map(|(v, u, c)| Constraint { v, u, c })
             .collect()
     }
-    fn expect_feasible<T: VarId, C: ConstraintTag>(constraints: Vec<Constraint<T, C>>) {
-        let mut sys: DCS<T, C> = constraints.clone().into_iter().collect();
+    fn expect_feasible<T: VarId>(constraints: Vec<Constraint<T>>) {
+        let mut sys: DCS<T> = constraints.clone().into_iter().collect();
         sys.solve();
         assert!(matches!(sys.status(), Status::Feasible));
         assert!(sys
@@ -172,9 +172,7 @@ mod tests {
             .check_constraints(constraints.iter())
             .is_none());
     }
-    fn expect_feasible_with_inner_checks<T: VarId, C: ConstraintTag>(
-        constraints: Vec<Constraint<T, C>>,
-    ) {
+    fn expect_feasible_with_inner_checks<T: VarId>(constraints: Vec<Constraint<T>>) {
         let mut sys = DCS::new();
         for (i, constraint) in constraints.iter().enumerate() {
             sys.add_constraint(constraint.clone());
@@ -187,10 +185,8 @@ mod tests {
                 .is_none());
         }
     }
-    fn expect_infeasible<T: VarId, C: ConstraintTag>(
-        constraints: Vec<Constraint<T, C>>,
-    ) -> DCS<T, C> {
-        let mut sys: DCS<T, C> = constraints.into_iter().collect();
+    fn expect_infeasible<T: VarId>(constraints: Vec<Constraint<T>>) -> DCS<T> {
+        let mut sys: DCS<T> = constraints.into_iter().collect();
         sys.solve();
         assert!(matches!(sys.status(), Status::Infeasible));
         let feasible_constraints: Vec<_> = sys.feasible_subsystem.constraints().collect();
@@ -207,7 +203,6 @@ mod tests {
             v: "x",
             u: "y",
             c: 0,
-            tag: (),
         }]);
     }
 
@@ -216,40 +211,43 @@ mod tests {
         let x = "x";
         let y = "y";
         let z = "z";
-        expect_feasible(as_constraints([
+        expect_feasible_with_inner_checks(as_constraints([
             (y, x, 1),
             (z, y, 2),
             (x, z, -3),
             (z, x, 4),
+            (z, x, 4),
+            (z, x, 4),
+            (x, z, -2),
+            (x, z, -2),
         ]));
     }
 
-    fn shrink_constraints<T: VarId, C: ConstraintTag, It: Iterator<Item = Constraint<T, C>>>(
-        constraints: It,
-    ) -> Vec<Constraint<T, C>> {
-        let mut x: HashMap<(T, T), (i64, C)> = HashMap::new();
-        for constraint in constraints {
-            let key = (constraint.v, constraint.u);
-            let val_to_insert = (constraint.c, constraint.tag);
-            if let Some((c, _)) = x.get(&key) {
-                if val_to_insert.0 > *c {
-                    continue;
-                }
-            }
-            x.insert(key, val_to_insert);
-        }
-        x.iter()
-            .map(|((v, u), (c, tag))| Constraint {
-                v: v.clone(),
-                u: u.clone(),
-                c: *c,
-                tag: tag.clone(),
-            })
-            .collect()
-    }
+    // fn shrink_constraints<T: VarId, It: Iterator<Item = Constraint<T>>>(
+    //     constraints: It,
+    // ) -> Vec<Constraint<T>> {
+    //     let mut x: HashMap<(T, T), (i64)> = HashMap::new();
+    //     for constraint in constraints {
+    //         let key = (constraint.v, constraint.u);
+    //         let val_to_insert = constraint.c;
+    //         if let Some((c, _)) = x.get(&key) {
+    //             if val_to_insert.0 > *c {
+    //                 continue;
+    //             }
+    //         }
+    //         x.insert(key, val_to_insert);
+    //     }
+    //     x.iter()
+    //         .map(|((v, u), (c))| Constraint {
+    //             v: v.clone(),
+    //             u: u.clone(),
+    //             c: *c,
+    //         })
+    //         .collect()
+    // }
     #[test]
     fn test_get_implied_ub() {
-        let mut sys: DCS<_, _> = as_constraints(
+        let mut sys: DCS<_> = as_constraints(
             [("y", "x", 1), ("z", "y", 2), ("x", "z", -3), ("z", "x", 4)].into_iter(),
         )
         .into_iter()
@@ -288,7 +286,6 @@ mod tests {
                 v: *v,
                 u: *u,
                 c: x[*v] - x[*u],
-                tag: (),
             })
             .collect();
         out.shuffle(&mut rng);
@@ -299,7 +296,6 @@ mod tests {
                 v: constraint.v,
                 u: constraint.u,
                 c: constraint.c + extra_c,
-                tag: (),
             })
         }
         // for constraint in out[..num_constraints] {}
@@ -314,12 +310,7 @@ mod tests {
         let mut constraints: MyConstraints = x
             .iter()
             .enumerate()
-            .map(|(u, c)| Constraint {
-                v: u + 1,
-                u,
-                c: *c,
-                tag: (),
-            })
+            .map(|(u, c)| Constraint { v: u + 1, u, c: *c })
             .collect();
         let infeasibility: i64 = rng.gen_range(1..10);
         let path_length: i64 = x.iter().sum();
@@ -327,7 +318,6 @@ mod tests {
             v: 0,
             u: cycle_size - 1,
             c: -path_length - infeasibility,
-            tag: (),
         });
         constraints
     }
@@ -352,7 +342,7 @@ mod tests {
         use rand::prelude::*;
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
 
-        let (feasible_constraints, _) = generate_random_feasible_constraints(
+        let (mut constraints, _) = generate_random_feasible_constraints(
             num_vars,
             num_feasible_constraints,
             num_dup_constraints,
@@ -360,11 +350,12 @@ mod tests {
         );
         let infeasible_constraints =
             generate_random_infeasible_cycle(num_infeasible_constraints, seed);
-        let mut constraints = shrink_constraints(
-            feasible_constraints
-                .into_iter()
-                .chain(infeasible_constraints.clone().into_iter()),
-        );
+        // let mut constraints = shrink_constraints(
+        //     feasible_constraints
+        //         .into_iter()
+        //         .chain(infeasible_constraints.clone().into_iter()),
+        // );
+        constraints.append(&mut infeasible_constraints.clone());
         // let mut constraints: MyConstraints = feasible_constraints
         //     .into_iter()
         //     .chain(infeasible_constraints.clone().into_iter())
@@ -427,30 +418,14 @@ mod tests {
     #[test]
     fn test_infeasible_system() {
         let constraints = vec![
-            Constraint {
-                v: 0,
-                u: 1,
-                c: 40,
-                tag: (),
-            },
-            Constraint {
-                v: 2,
-                u: 1,
-                c: 6,
-                tag: (),
-            },
-            Constraint {
-                v: 0,
-                u: 2,
-                c: -60,
-                tag: (),
-            },
-            Constraint {
-                v: 1,
-                u: 0,
-                c: -40,
-                tag: (),
-            },
+            Constraint { v: 0, u: 1, c: 40 },
+            Constraint { v: 0, u: 1, c: 41 },
+            Constraint { v: 2, u: 1, c: 6 },
+            Constraint { v: 2, u: 1, c: 6 },
+            Constraint { v: 2, u: 1, c: 6 },
+            Constraint { v: 0, u: 2, c: -60 },
+            Constraint { v: 1, u: 0, c: -40 },
+            Constraint { v: 1, u: 0, c: -40 },
         ];
         expect_infeasible(constraints);
     }
@@ -458,32 +433,12 @@ mod tests {
     #[test]
     fn test_remove_constraint() {
         let constraints = [
-            Constraint {
-                v: 0,
-                u: 1,
-                c: 40,
-                tag: (),
-            },
-            Constraint {
-                v: 2,
-                u: 1,
-                c: 6,
-                tag: (),
-            },
-            Constraint {
-                v: 0,
-                u: 2,
-                c: -60,
-                tag: (),
-            },
-            Constraint {
-                v: 1,
-                u: 0,
-                c: -40,
-                tag: (),
-            },
+            Constraint { v: 0, u: 1, c: 40 },
+            Constraint { v: 2, u: 1, c: 6 },
+            Constraint { v: 0, u: 2, c: -60 },
+            Constraint { v: 1, u: 0, c: -40 },
         ];
-        let sys: DCS<_, _> = constraints.clone().into_iter().collect();
+        let sys: DCS<_> = constraints.clone().into_iter().collect();
         // sys.remove_constraint(constraints[3].clone(), &sol);
         // assert!(sys.is_feasible());
         // assert!(sys.check_solution(&sol));
@@ -492,7 +447,7 @@ mod tests {
         //         v: 1,
         //         u: 0,
         //         c: -30,
-        //         tag: (),
+        //
         //     },
         //     &sol,
         // );

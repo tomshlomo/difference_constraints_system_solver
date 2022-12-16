@@ -1,93 +1,139 @@
 use pathfinding::prelude::dijkstra;
 use priority_queue::PriorityQueue;
 use std::cmp::Reverse;
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 
-use crate::common::{Constraint, ConstraintTag, VarId};
+use crate::common::{Constraint, VarId};
 use crate::solution::Solution;
 
-struct FromEdges<T: VarId, C: ConstraintTag>(HashMap<T, PriorityQueue<(i64, C), Reverse<i64>>>);
-impl<T: VarId, C: ConstraintTag> FromEdges<T, C> {
-    fn new() -> Self {
-        FromEdges(HashMap::new())
+pub struct EdgeDoesNotExist;
+
+#[derive(Default)]
+struct MultiEdge {
+    queue: PriorityQueue<i64, Reverse<i64>>,
+    counts: HashMap<i64, usize>, // todo: maybe use counter crate
+}
+
+impl MultiEdge {
+    fn push(&mut self, c: i64) -> bool {
+        let Some(old_priority) = self.queue.push(c, Reverse(c)) else {
+            self.counts.insert(c, 1);
+            return true;
+        };
+        let count = self.counts.entry(c).or_insert(0);
+        *count += 1;
+        (old_priority.0 > c) && (count == &1)
     }
+    fn peek(&self) -> Option<&i64> {
+        self.queue.peek().map(|(k, _)| k)
+    }
+    fn remove(&mut self, c: i64) -> Result<bool, EdgeDoesNotExist> {
+        let Entry::Occupied(mut occupied_entry) = self.counts.entry(c) else {
+            return  Err(EdgeDoesNotExist);
+        };
+        let count = occupied_entry.get_mut();
+        if count == &0 {
+            return Err(EdgeDoesNotExist);
+        };
+        if *count > 1 {
+            *count -= 1;
+            return Ok(false);
+        }
+        // count == 1, we need to delete
+        occupied_entry.remove_entry();
+        self.queue.remove(&c);
+        if let Some(new_min) = self.peek() {
+            return Ok(new_min > &c);
+        };
+        Ok(true)
+    }
+    fn is_empty(&self) -> bool {
+        self.queue.is_empty()
+    }
+}
+
+// #[derive(Default)]
+struct FromEdges<T: VarId>(HashMap<T, MultiEdge>);
+impl<T: VarId> FromEdges<T> {
     fn is_empty(&self) -> bool {
         self.0.values().all(|a| a.is_empty()) // todo: cahce
     }
-    fn to_pairs(&self) -> impl Iterator<Item = (&T, &i64, &C)> + '_ {
-        self.0.iter().filter_map(|(var, heap)| {
-            // todo: use Option.map instead if match
-            if let Some(((val, tag), _)) = heap.peek() {
-                Some((var, val, tag))
-            } else {
-                None
-            }
-        })
-    }
-    fn add(&mut self, var: T, val: i64, tag: C) {
+    fn to_pairs(&self) -> impl Iterator<Item = (&T, &i64)> + '_ {
         self.0
-            .entry(var)
-            .or_default()
-            .push((val, tag), Reverse(val));
+            .iter()
+            .filter_map(|(var, multi_edge)| multi_edge.peek().map(|val| (var, val)))
     }
-    fn remove(&mut self, var: &T, val: i64, tag: C) -> bool {
-        if let Some(heap) = self.0.get_mut(var) {
-            return heap.remove(&(val, tag)).is_some();
-            // return heap.remove(val);
+    fn add(&mut self, var: T, val: i64) -> bool {
+        self.0.entry(var).or_default().push(val)
+    }
+    fn remove(&mut self, var: T, val: i64) -> Result<bool, EdgeDoesNotExist> {
+        let Entry::Occupied(mut occupied_entry) = self.0.entry(var) else {
+            return  Err(EdgeDoesNotExist);
         };
-        false
+        let multi_edge = occupied_entry.get_mut();
+        let out = multi_edge.remove(val);
+        if multi_edge.is_empty() {
+            occupied_entry.remove_entry();
+        }
+        out
     }
 }
-impl<T: VarId, C: ConstraintTag> Default for FromEdges<T, C> {
+
+impl<T: VarId> Default for FromEdges<T> {
     fn default() -> Self {
-        Self::new()
+        FromEdges(HashMap::new())
     }
 }
-struct Edges<T: VarId, C: ConstraintTag>(HashMap<T, FromEdges<T, C>>);
-impl<T: VarId, C: ConstraintTag> Edges<T, C> {
+struct Edges<T: VarId>(HashMap<T, FromEdges<T>>);
+impl<T: VarId> Edges<T> {
     fn new() -> Self {
         Edges(HashMap::new())
     }
     fn is_empty(&self) -> bool {
         self.0.values().all(|a| a.is_empty()) // todo: cahce
     }
-    fn to_constraints(&self) -> impl Iterator<Item = Constraint<T, C>> + '_ {
+    fn to_constraints(&self) -> impl Iterator<Item = Constraint<T>> + '_ {
         self.0.iter().flat_map(|(u, from_edges)| {
-            from_edges.to_pairs().map(|(v, c, tag)| Constraint {
+            from_edges.to_pairs().map(|(v, c)| Constraint {
                 v: v.clone(),
                 u: u.clone(),
                 c: *c,
-                tag: tag.clone(),
             })
         })
     }
-    fn add(&mut self, constraint: Constraint<T, C>) {
+    fn add(&mut self, constraint: Constraint<T>) -> bool {
         self.0
             .entry(constraint.u)
             .or_default()
-            .add(constraint.v, constraint.c, constraint.tag);
+            .add(constraint.v, constraint.c)
     }
-    fn remove(&mut self, constraint: Constraint<T, C>) -> bool {
-        if let Some(from_u) = self.0.get_mut(&constraint.u) {
-            return from_u.remove(&constraint.v, constraint.c, constraint.tag);
+    fn remove(&mut self, constraint: Constraint<T>) -> Result<bool, EdgeDoesNotExist> {
+        let Entry::Occupied(mut occupied_entry) = self.0.entry(constraint.u) else {
+            return  Err(EdgeDoesNotExist);
         };
-        false
+        let from_edges = occupied_entry.get_mut();
+        let out = from_edges.remove(constraint.v, constraint.c);
+        if from_edges.is_empty() {
+            occupied_entry.remove_entry();
+        }
+        out
     }
 }
 
-pub struct FeasibleSystem<T: VarId, C: ConstraintTag> {
-    edges: Edges<T, C>,
+pub struct FeasibleSystem<T: VarId> {
+    edges: Edges<T>,
     pub solution: Solution<T>,
 }
 
-impl<T: VarId, C: ConstraintTag> FeasibleSystem<T, C> {
+impl<T: VarId> FeasibleSystem<T> {
     pub fn new() -> Self {
         FeasibleSystem {
             edges: Edges::new(),
             solution: Solution::new(),
         }
     }
-    pub fn constraints(&self) -> impl Iterator<Item = Constraint<T, C>> + '_ {
+    pub fn constraints(&self) -> impl Iterator<Item = Constraint<T>> + '_ {
         self.edges.to_constraints()
     }
     pub fn check_solution(&self, sol: &Solution<T>) -> bool {
@@ -98,7 +144,7 @@ impl<T: VarId, C: ConstraintTag> FeasibleSystem<T, C> {
         }
         true
     }
-    pub fn attempt_add_constraint(&mut self, constraint: Constraint<T, C>) -> bool {
+    pub fn attempt_add_constraint(&mut self, constraint: Constraint<T>) -> bool {
         if self
             .solution
             .check_constraint_and_add_vars_if_missing(&constraint)
@@ -116,7 +162,7 @@ impl<T: VarId, C: ConstraintTag> FeasibleSystem<T, C> {
     }
     pub fn check_and_solve_new_constraint(
         &self,
-        constraint: &Constraint<T, C>,
+        constraint: &Constraint<T>,
     ) -> Option<HashMap<T, i64>> {
         // todo: maybe this function should be outside the class
         let mut sol_diff = HashMap::new();
@@ -141,7 +187,7 @@ impl<T: VarId, C: ConstraintTag> FeasibleSystem<T, C> {
                     continue;
             };
             // equivalent to `for (y, x2y_scaled) in self.scaled_succesors(y)`, but with less lookups.
-            for (y, x2y_unscaled, _) in succesors.to_pairs() {
+            for (y, x2y_unscaled) in succesors.to_pairs() {
                 let d_y = self.solution.get_or(y, 0);
                 let x2y_scaled = x2y_unscaled + d_x - d_y;
                 let v2y_scaled = v2x_scaled.0 + x2y_scaled;
@@ -152,7 +198,10 @@ impl<T: VarId, C: ConstraintTag> FeasibleSystem<T, C> {
         }
         Some(sol_diff)
     }
-    pub fn remove_constraint(&mut self, constraint_to_remove: Constraint<T, C>) -> bool {
+    pub fn remove_constraint(
+        &mut self,
+        constraint_to_remove: Constraint<T>,
+    ) -> Result<bool, EdgeDoesNotExist> {
         // todo: there are two types of remove with different tradeoffs.
         // one (implemented below) that after removing an infeasible constraints, does not need to check the other feasible constraints.
         // however it does need to check every new constraint, even if the system is infeasible already.
@@ -167,15 +216,24 @@ impl<T: VarId, C: ConstraintTag> FeasibleSystem<T, C> {
         // otherwise, move all infeasible constraints to undetermined.
         self.edges.remove(constraint_to_remove)
     }
-    pub fn remove_constraints<I: Iterator<Item = Constraint<T, C>>>(
+    pub fn remove_constraints<I: Iterator<Item = Constraint<T>>>(
         &mut self,
         constraints: I,
-    ) -> bool {
+    ) -> Result<bool, EdgeDoesNotExist> {
         let mut any_removed = false;
+        let mut return_error = false;
         for constraint in constraints {
-            any_removed |= self.remove_constraint(constraint);
+            if let Ok(any_removed_tmp) = self.remove_constraint(constraint) {
+                any_removed |= any_removed_tmp
+            } else {
+                return_error = true;
+            }
         }
-        any_removed
+        if return_error {
+            Err(EdgeDoesNotExist) // todo: should be NonExistingConstraints, and hold which ones
+        } else {
+            Ok(any_removed)
+        }
     }
     pub fn get_implied_ub(&self, x: &T, y: &T) -> Option<i64> {
         // gives the constraint x - y <= a (with smallest possible a) that is implied by the system
@@ -202,17 +260,11 @@ impl<T: VarId, C: ConstraintTag> FeasibleSystem<T, C> {
         let d_node = self.solution.get_or(node, 0);
         let out = from_edges
             .to_pairs()
-            .map(|(y, w, _)| (y.clone(), d_node + w - self.solution.get_or(y, 0)))
+            .map(|(y, w)| (y.clone(), d_node + w - self.solution.get_or(y, 0)))
             .collect();
         out
     }
     fn descale_dist(&self, scaled_dist: i64, from_node: &T, to_node: &T) -> i64 {
         -self.solution.get_or(from_node, 0) + scaled_dist + self.solution.get_or(to_node, 0)
-    }
-}
-
-impl<T: VarId, C: ConstraintTag> Default for FeasibleSystem<T, C> {
-    fn default() -> Self {
-        Self::new()
     }
 }
