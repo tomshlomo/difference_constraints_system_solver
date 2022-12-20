@@ -4,22 +4,27 @@ use std::cmp::Reverse;
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 
-use crate::common::{Constraint, EdgeDoesNotExist, MultiEdge, VarId};
+use crate::common::{
+    Constraint, ConstraintPriority, EdgeDoesNotExist, MultiConstraint, MultiEdge, VarId,
+};
 use crate::solution::Solution;
 
 // #[derive(Default)]
-struct FromEdges<T: VarId>(HashMap<T, MultiEdge>);
-impl<T: VarId> FromEdges<T> {
+struct FromEdges<T: VarId, P: ConstraintPriority>(HashMap<T, MultiEdge<P>>); // todo:should also be prioritized so that to_pairs order will not be random, but prioritized
+impl<T: VarId, P: ConstraintPriority> FromEdges<T, P> {
     fn is_empty(&self) -> bool {
         self.0.values().all(|a| a.is_empty()) // todo: cahce
     }
-    fn to_pairs(&self) -> impl Iterator<Item = (&T, &i64)> + '_ {
-        self.0
-            .iter()
-            .filter_map(|(var, multi_edge)| multi_edge.peek().map(|val| (var, val)))
+    fn to_pairs(&self) -> impl Iterator<Item = (&T, &i64, &P)> + '_ {
+        self.0.iter().filter_map(|(var, multi_edge)| {
+            multi_edge.peek().map(|(c, priority)| (var, c, priority))
+        })
     }
-    fn add(&mut self, var: T, val: i64) -> bool {
-        self.0.entry(var).or_default().push(val)
+    fn add_edge(&mut self, var: T, val: i64, priority: P) -> bool {
+        self.0.entry(var).or_default().push(val, priority)
+    }
+    fn add_multi_edge(&mut self, var: T, multi_edge: MultiEdge<P>) -> bool {
+        self.0.entry(var).or_default().merge(multi_edge)
     }
     fn remove(&mut self, var: T, val: i64) -> Result<bool, EdgeDoesNotExist> {
         let Entry::Occupied(mut occupied_entry) = self.0.entry(var) else {
@@ -34,35 +39,43 @@ impl<T: VarId> FromEdges<T> {
     }
 }
 
-impl<T: VarId> Default for FromEdges<T> {
+impl<T: VarId, P: ConstraintPriority> Default for FromEdges<T, P> {
     fn default() -> Self {
         FromEdges(HashMap::new())
     }
 }
-struct Edges<T: VarId>(HashMap<T, FromEdges<T>>);
-impl<T: VarId> Edges<T> {
+struct Edges<T: VarId, P: ConstraintPriority>(HashMap<T, FromEdges<T, P>>);
+impl<T: VarId, P: ConstraintPriority> Edges<T, P> {
     fn new() -> Self {
         Edges(HashMap::new())
     }
     fn is_empty(&self) -> bool {
         self.0.values().all(|a| a.is_empty()) // todo: cahce
     }
-    fn to_constraints(&self) -> impl Iterator<Item = Constraint<T>> + '_ {
+    fn to_constraints(&self) -> impl Iterator<Item = Constraint<T, P>> + '_ {
         self.0.iter().flat_map(|(u, from_edges)| {
-            from_edges.to_pairs().map(|(v, c)| Constraint {
+            from_edges.to_pairs().map(|(v, c, priority)| Constraint {
                 v: v.clone(),
                 u: u.clone(),
                 c: *c,
+                priority: priority.clone(),
             })
         })
     }
-    fn add(&mut self, constraint: Constraint<T>) -> bool {
-        self.0
-            .entry(constraint.u)
-            .or_default()
-            .add(constraint.v, constraint.c)
+    fn add_constraint(&mut self, constraint: Constraint<T, P>) -> bool {
+        self.0.entry(constraint.u).or_default().add_edge(
+            constraint.v,
+            constraint.c,
+            constraint.priority,
+        )
     }
-    fn remove(&mut self, constraint: Constraint<T>) -> Result<bool, EdgeDoesNotExist> {
+    fn add_multi_constraint(&mut self, multi_constraint: &MultiConstraint<T, P>) -> bool {
+        self.0
+            .entry(multi_constraint.u)
+            .or_default()
+            .add_multi_edge(multi_constraint.v, multi_constraint.c)
+    }
+    fn remove(&mut self, constraint: Constraint<T, P>) -> Result<bool, EdgeDoesNotExist> {
         let Entry::Occupied(mut occupied_entry) = self.0.entry(constraint.u) else {
             return  Err(EdgeDoesNotExist);
         };
@@ -75,19 +88,19 @@ impl<T: VarId> Edges<T> {
     }
 }
 
-pub struct FeasibleSystem<T: VarId> {
-    edges: Edges<T>,
+pub struct FeasibleSystem<T: VarId, P: ConstraintPriority> {
+    edges: Edges<T, P>,
     pub solution: Solution<T>,
 }
 
-impl<T: VarId> FeasibleSystem<T> {
+impl<T: VarId, P: ConstraintPriority> FeasibleSystem<T, P> {
     pub fn new() -> Self {
         FeasibleSystem {
             edges: Edges::new(),
             solution: Solution::new(),
         }
     }
-    pub fn constraints(&self) -> impl Iterator<Item = Constraint<T>> + '_ {
+    pub fn constraints(&self) -> impl Iterator<Item = Constraint<T, P>> + '_ {
         self.edges.to_constraints()
     }
     pub fn check_solution(&self, sol: &Solution<T>) -> bool {
@@ -98,17 +111,39 @@ impl<T: VarId> FeasibleSystem<T> {
         }
         true
     }
-    pub fn attempt_add_constraint(&mut self, constraint: Constraint<T>) -> bool {
+    pub fn attempt_add_multi_constraint(
+        &mut self,
+        multi_constraint: &MultiConstraint<T, P>,
+    ) -> bool {
+        let Some(constraint) = multi_constraint.to_constraint() else {
+            return true
+        };
         if self
             .solution
-            .check_constraint_and_add_vars_if_missing(&constraint)
+            .check_constraint_and_add_vars_if_missing(constraint)
         {
-            self.edges.add(constraint);
+            self.edges.add_multi_constraint(multi_constraint);
             return true;
         }
         let new_sol = self.check_and_solve_new_constraint(&constraint);
         if let Some(sol_diff) = new_sol {
-            self.edges.add(constraint);
+            self.edges.add_multi_constraint(multi_constraint);
+            self.solution.batch_update(sol_diff);
+            return true;
+        }
+        false
+    }
+    pub fn attempt_add_constraint(&mut self, constraint: Constraint<T, P>) -> bool {
+        if self
+            .solution
+            .check_constraint_and_add_vars_if_missing(&constraint)
+        {
+            self.edges.add_constraint(constraint);
+            return true;
+        }
+        let new_sol = self.check_and_solve_new_constraint(&constraint);
+        if let Some(sol_diff) = new_sol {
+            self.edges.add_constraint(constraint);
             self.solution.batch_update(sol_diff);
             return true;
         }
@@ -116,7 +151,7 @@ impl<T: VarId> FeasibleSystem<T> {
     }
     pub fn check_and_solve_new_constraint(
         &self,
-        constraint: &Constraint<T>,
+        constraint: &Constraint<T, P>,
     ) -> Option<HashMap<T, i64>> {
         // todo: maybe this function should be outside the class
         let mut sol_diff = HashMap::new();
@@ -141,7 +176,7 @@ impl<T: VarId> FeasibleSystem<T> {
                     continue;
             };
             // equivalent to `for (y, x2y_scaled) in self.scaled_succesors(y)`, but with less lookups.
-            for (y, x2y_unscaled) in succesors.to_pairs() {
+            for (y, x2y_unscaled, _) in succesors.to_pairs() {
                 let d_y = self.solution.get_or(y, 0);
                 let x2y_scaled = x2y_unscaled + d_x - d_y;
                 let v2y_scaled = v2x_scaled.0 + x2y_scaled;
@@ -154,7 +189,7 @@ impl<T: VarId> FeasibleSystem<T> {
     }
     pub fn remove_constraint(
         &mut self,
-        constraint_to_remove: Constraint<T>,
+        constraint_to_remove: Constraint<T, P>,
     ) -> Result<bool, EdgeDoesNotExist> {
         // todo: there are two types of remove with different tradeoffs.
         // one (implemented below) that after removing an infeasible constraints, does not need to check the other feasible constraints.
@@ -170,7 +205,7 @@ impl<T: VarId> FeasibleSystem<T> {
         // otherwise, move all infeasible constraints to undetermined.
         self.edges.remove(constraint_to_remove)
     }
-    pub fn remove_constraints<I: Iterator<Item = Constraint<T>>>(
+    pub fn remove_constraints<I: Iterator<Item = Constraint<T, P>>>(
         &mut self,
         constraints: I,
     ) -> Result<bool, EdgeDoesNotExist> {
@@ -214,11 +249,13 @@ impl<T: VarId> FeasibleSystem<T> {
         let d_node = self.solution.get_or(node, 0);
         let out = from_edges
             .to_pairs()
-            .map(|(y, w)| (y.clone(), d_node + w - self.solution.get_or(y, 0)))
+            .map(|(y, w, _)| (y.clone(), d_node + w - self.solution.get_or(y, 0)))
             .collect();
         out
     }
     fn descale_dist(&self, scaled_dist: i64, from_node: &T, to_node: &T) -> i64 {
         -self.solution.get_or(from_node, 0) + scaled_dist + self.solution.get_or(to_node, 0)
     }
+    // pub fn get_constraint
+    // pub fn includes(&self, constraint: &Constraint<T, P>) -> bool {}
 }

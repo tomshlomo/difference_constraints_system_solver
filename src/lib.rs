@@ -3,7 +3,7 @@ use feasible_system::FeasibleSystem;
 use std::collections::HashSet;
 
 mod common;
-use common::{Constraint, VarId};
+use common::{Constraint, ConstraintPriority, VarId};
 mod solution;
 use solution::Solution;
 mod feasible_system;
@@ -17,13 +17,13 @@ pub enum Status {
     // undetermined_constraint: &'a Constraint<T>,
 }
 
-pub struct DCS<T: VarId, P: Ord> {
-    feasible_subsystem: FeasibleSystem<T>,
+pub struct DCS<T: VarId, P: ConstraintPriority> {
+    feasible_subsystem: FeasibleSystem<T, P>,
     infeasible_constraints: PrioritizedMulticConstraints<T, P>,
     undetermined_constraints: PrioritizedMulticConstraints<T, P>,
 }
 
-impl<T: VarId, P: Ord> DCS<T, P> {
+impl<T: VarId, P: ConstraintPriority> DCS<T, P> {
     pub fn new() -> Self {
         DCS {
             feasible_subsystem: FeasibleSystem::new(),
@@ -79,9 +79,7 @@ impl<T: VarId, P: Ord> DCS<T, P> {
             Status::Feasible => self.feasible_subsystem.check_solution(sol),
             Status::Infeasible => false,
             Status::Undetermined { .. } => {
-                self.undetermined_constraints
-                    .iter()
-                    .all(|constraint| sol.check_constraint(constraint))
+                self.undetermined_constraints.check_solution(sol)
                     && self.feasible_subsystem.check_solution(sol)
             }
         }
@@ -94,12 +92,11 @@ impl<T: VarId, P: Ord> DCS<T, P> {
     // }
     pub fn add_constraint(
         &mut self,
-        constraint: Constraint<T>,
-        priority: P,
+        constraint: Constraint<T, P>,
         // sol: &Solution<T>,
         // ) -> Option<Solution<T>> {
     ) {
-        self.undetermined_constraints.push(constraint, priority);
+        self.undetermined_constraints.push(constraint);
         // let new_sol = self.check_and_solve_new_constraint(&constraint, sol);
         // match new_sol {
         //     Some(_) => self.add_to_feasible(constraint),
@@ -109,20 +106,20 @@ impl<T: VarId, P: Ord> DCS<T, P> {
     }
     pub fn solve(&mut self) {
         while self.infeasible_constraints.is_empty() {
-            let Some(undetermined_constraint) = self.undetermined_constraints.pop() else {
+            let Some(undetermined_multi_constraint) = self.undetermined_constraints.pop() else {
                 return
             };
             if !self
                 .feasible_subsystem
-                .attempt_add_constraint(undetermined_constraint.clone())
+                .attempt_add_multi_constraint(&undetermined_multi_constraint)
             // todo: avoid this clone
             {
-                self.infeasible_constraints.insert(undetermined_constraint);
+                self.infeasible_constraints.add_multi_constraint(constraint);
                 return;
             }
         }
     }
-    pub fn remove_constraint(&mut self, constraint: Constraint<T>) {
+    pub fn remove_constraint(&mut self, constraint: Constraint<T, P>) {
         panic!();
         if self.infeasible_constraints.remove(&constraint) {
             return;
@@ -130,14 +127,14 @@ impl<T: VarId, P: Ord> DCS<T, P> {
         // if self.undetermined_constraints.contains(&)
     }
 }
-impl<T: VarId> Default for DCS<T> {
+impl<T: VarId, P: ConstraintPriority> Default for DCS<T, P> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: VarId> FromIterator<Constraint<T>> for DCS<T> {
-    fn from_iter<I: IntoIterator<Item = Constraint<T>>>(iter: I) -> Self {
+impl<T: VarId, P: ConstraintPriority> FromIterator<Constraint<T, P>> for DCS<T, P> {
+    fn from_iter<I: IntoIterator<Item = Constraint<T, P>>>(iter: I) -> Self {
         let mut system = DCS::new();
         for constraint in iter {
             system.add_constraint(constraint);

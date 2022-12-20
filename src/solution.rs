@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
 
-use crate::common::{Constraint, VarId};
+use crate::common::{Constraint, ConstraintPriority, VarId};
 
 #[derive(Debug, Clone)]
 pub struct Solution<T: VarId>(HashMap<T, i64>);
@@ -20,22 +20,25 @@ impl<'a, T: VarId + 'a> Solution<T> {
     pub fn get(&self, var: &T) -> Option<&i64> {
         self.0.get(var)
     }
-    pub fn check_constraint(&self, constraint: &Constraint<T>) -> bool {
+    pub fn check_constraint<P: ConstraintPriority>(&self, constraint: &Constraint<T, P>) -> bool {
         if let (Some(u), Some(v)) = (self.get(&constraint.u), self.get(&constraint.v)) {
             return v - u <= constraint.c;
         }
         true
     }
-    pub fn check_constraints<I: Iterator<Item = &'a Constraint<T>>>(
+    pub fn check_constraints<P: ConstraintPriority, I: Iterator<Item = &'a Constraint<T, P>>>(
         &self,
         mut constraints: I,
-    ) -> Option<&'a Constraint<T>> {
+    ) -> Option<&'a Constraint<T, P>> {
         constraints.find(|constraint| !self.check_constraint(constraint))
     }
     pub fn batch_update(&mut self, map: HashMap<T, i64>) {
         self.0.extend(map);
     }
-    pub fn check_constraint_and_add_vars_if_missing(&mut self, constraint: &Constraint<T>) -> bool {
+    pub fn check_constraint_and_add_vars_if_missing<P: ConstraintPriority>(
+        &mut self,
+        constraint: &Constraint<T, P>,
+    ) -> bool {
         match (self.get(&constraint.v), self.get(&constraint.u)) {
             (Some(d_v), Some(d_u)) => d_v - d_u <= constraint.c,
             (None, Some(d_u)) => {
